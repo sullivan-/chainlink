@@ -22,6 +22,8 @@ import (
 
 	null "gopkg.in/guregu/null.v3"
 
+	rpc "github.com/ethereum/go-ethereum/rpc"
+
 	store "github.com/smartcontractkit/chainlink/core/store"
 )
 
@@ -471,6 +473,22 @@ func (_m *TxManager) NextActiveAccount() *store.ManagedAccount {
 // OnNewHead provides a mock function with given fields: _a0
 func (_m *TxManager) OnNewHead(_a0 *models.Head) {
 	_m.Called(_a0)
+}
+
+// RPCClient provides a mock function with given fields:
+func (_m *TxManager) RPCClient() *rpc.Client {
+	ret := _m.Called()
+
+	var r0 *rpc.Client
+	if rf, ok := ret.Get(0).(func() *rpc.Client); ok {
+		r0 = rf()
+	} else {
+		if ret.Get(0) != nil {
+			r0 = ret.Get(0).(*rpc.Client)
+		}
+	}
+
+	return r0
 }
 
 // Register provides a mock function with given fields: _a0

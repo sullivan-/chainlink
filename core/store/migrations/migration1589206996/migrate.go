@@ -6,7 +6,7 @@ import (
 
 // Migrate adds the requisite tables for the BulletproofTxManager
 // I have tried to make an intelligent guess at the required indexes and
-// constraints but this will need revisiting after the system has been finished
+// constraints but this will undergo revision as the work progresses
 func Migrate(tx *gorm.DB) error {
 	return tx.Exec(`
 	  	CREATE TABLE eth_transactions (
@@ -18,10 +18,13 @@ func Migrate(tx *gorm.DB) error {
 			value numeric(78, 0) NOT NULL,
 			gas_limit bigint NOT NULL,
 			error text,
+			broadcast_at timestamptz,
 			created_at timestamptz NOT NULL
 	  	);
 
+		-- TODO: check on error/broadcast at and add indexes
 		CREATE UNIQUE INDEX idx_eth_transactions_nonce_from_address ON eth_transactions (nonce, from_address);
+		CREATE INDEX idx_eth_transactions_unbroadcasted ON eth_transactions(nonce, error) WHERE nonce IS NULL AND error IS NULL;
 		CREATE INDEX idx_eth_transactions_created_at ON eth_transactions USING BRIN (created_at);
 
 		ALTER TABLE eth_transactions ADD CONSTRAINT chk_nonce_requires_from_address CHECK (
@@ -30,6 +33,10 @@ func Migrate(tx *gorm.DB) error {
 
 		ALTER TABLE eth_transactions ADD CONSTRAINT chk_nonce_may_not_be_present_with_error CHECK (
 			nonce IS NULL OR error IS NULL
+		);
+
+		ALTER TABLE eth_transactions ADD CONSTRAINT chk_broadcast_at_may_not_be_present_with_error CHECK (
+			broadcast_at IS NULL OR error IS NULL
 		);
 
 		CREATE TABLE eth_transaction_attempts (

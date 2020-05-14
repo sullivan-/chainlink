@@ -17,6 +17,8 @@ import (
 	"github.com/smartcontractkit/chainlink/core/store/orm"
 	"github.com/smartcontractkit/chainlink/core/utils"
 
+	gethTypes "github.com/ethereum/go-ethereum/core/types"
+	gethClient "github.com/ethereum/go-ethereum/ethclient"
 	"github.com/ethereum/go-ethereum/rpc"
 	"github.com/jinzhu/gorm"
 	"github.com/pkg/errors"
@@ -30,6 +32,12 @@ const (
 	AutoMigrate = "auto_migrate"
 )
 
+// https://github.com/ethereum/go-ethereum/blob/master/ethclient/ethclient.go
+//go:generate mockery -name GethClient -output ../internal/mocks/ -case=underscore
+type GethClient interface {
+	SendTransaction(context.Context, *gethTypes.Transaction) error
+}
+
 // Store contains fields for the database, Config, KeyStore, and TxManager
 // for keeping the application state in sync with the database.
 type Store struct {
@@ -39,6 +47,7 @@ type Store struct {
 	KeyStore    KeyStoreInterface
 	VRFKeyStore *VRFKeyStore
 	TxManager   TxManager
+	GethClient  GethClient
 	closeOnce   *sync.Once
 }
 
@@ -64,6 +73,10 @@ func newLazyRPCWrapper(urlString string, limiter *rate.Limiter) (eth.CallerSubsc
 		initialized: abool.New(),
 		limiter:     limiter,
 	}, nil
+}
+
+func (wrapper *lazyRPCWrapper) RPCClient() *rpc.Client {
+	return wrapper.client
 }
 
 // lazyDialInitializer initializes the Dial instance used to interact with
@@ -178,13 +191,20 @@ func newStoreWithDialerAndKeyStore(
 	keyStore := keyStoreGenerator()
 	callerSubscriberClient := &eth.CallerSubscriberClient{CallerSubscriber: ethrpc}
 	txManager := NewEthTxManager(callerSubscriberClient, config, keyStore, orm)
+
+	connectedGethClient := gethClient.NewClient(ethrpc.RPCClient())
+	if err != nil {
+		logger.Fatalf("Unable to dial ETH client: %+v", err)
+	}
+
 	store := &Store{
-		Clock:     utils.Clock{},
-		Config:    config,
-		KeyStore:  keyStore,
-		ORM:       orm,
-		TxManager: txManager,
-		closeOnce: &sync.Once{},
+		Clock:      utils.Clock{},
+		Config:     config,
+		KeyStore:   keyStore,
+		ORM:        orm,
+		TxManager:  txManager,
+		GethClient: connectedGethClient,
+		closeOnce:  &sync.Once{},
 	}
 	store.VRFKeyStore = NewVRFKeyStore(store)
 	return store

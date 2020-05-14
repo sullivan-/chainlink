@@ -1543,16 +1543,19 @@ func TestJobs_SQLiteBatchSizeIntegrity(t *testing.T) {
 func TestORM_EthTaskRunTransaction(t *testing.T) {
 	t.Parallel()
 
-	// NOTE: Must sidestep transactional tests since we rely on error codes for this function
-	tc, orm, cleanup := cltest.BootstrapThrowawayORM(t, "eth_task_run_transactions", true)
+	// NOTE: Must sidestep transactional tests since we rely on transaction
+	// rollback due to constraint violation for this function
+	tc, orm, cleanup := cltest.BootstrapThrowawayORM(t, "eth_task_run_transactions", true, true)
 	defer cleanup()
 	store, cleanup := cltest.NewStoreWithConfig(t, tc)
 	defer cleanup()
 
 	sharedTaskRunID := cltest.MustInsertTaskRun(t, store)
+	keys, err := orm.Keys()
+	require.NoError(t, err)
+	fromAddress := keys[0].Address.Address()
 
 	t.Run("creates eth_task_run_transaction and eth_transaction", func(t *testing.T) {
-		fromAddress := cltest.NewAddress()
 		toAddress := cltest.NewAddress()
 		encodedPayload := []byte{0, 1, 2}
 		gasLimit := uint64(42)
@@ -1586,7 +1589,6 @@ func TestORM_EthTaskRunTransaction(t *testing.T) {
 	})
 
 	t.Run("returns error if eth_task_run_transaction already exists with this task run ID but has different values", func(t *testing.T) {
-		fromAddress := cltest.NewAddress()
 		toAddress := cltest.NewAddress()
 		encodedPayload := []byte{3, 2, 1}
 		gasLimit := uint64(24)

@@ -22,6 +22,7 @@ type Key struct {
 	JSON      JSON         `gorm:"type:text"`
 	CreatedAt time.Time    `json:"-"`
 	UpdatedAt time.Time    `json:"-"`
+	Nonce     int64
 }
 
 type EncryptedSecretVRFKey = vrfkey.EncryptedSecretKey

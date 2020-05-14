@@ -25,7 +25,9 @@ const (
 // EthTx holds the Address to send the result to and the FunctionSelector
 // to execute.
 type EthTx struct {
-	Address          common.Address       `json:"address"`
+	ToAddress common.Address `json:"address"`
+	// TODO: Add validation on this... can we use a JSON foreign key??? Otherwise may need to write it to a column
+	FromAddress      *common.Address      `json:"fromAddress"`
 	FunctionSelector eth.FunctionSelector `json:"functionSelector"`
 	DataPrefix       hexutil.Bytes        `json:"dataPrefix"`
 	DataFormat       string               `json:"format"`
@@ -57,9 +59,10 @@ func (etx *EthTx) perform(input models.RunInput, store *strpkg.Store) models.Run
 	}
 
 	taskRunID := input.TaskRunID()
-	toAddress := etx.Address
+	toAddress := etx.ToAddress
+	fromAddress := etx.FromAddress
 	encodedPayload := utils.ConcatBytes(etx.FunctionSelector.Bytes(), etx.DataPrefix, value)
-	if err := store.IdempotentInsertEthTaskRunTransaction(taskRunID, nil, toAddress, encodedPayload, etx.GasLimit); err != nil {
+	if err := store.IdempotentInsertEthTaskRunTransaction(taskRunID, fromAddress, toAddress, encodedPayload, etx.GasLimit); err != nil {
 		return models.NewRunOutputError(err)
 	}
 
@@ -82,7 +85,7 @@ func (etx *EthTx) legacyPerform(input models.RunInput, store *strpkg.Store) mode
 	}
 
 	data := utils.ConcatBytes(etx.FunctionSelector.Bytes(), etx.DataPrefix, value)
-	return createTxRunResult(etx.Address, etx.GasPrice, etx.GasLimit, data, input, store)
+	return createTxRunResult(etx.ToAddress, etx.GasPrice, etx.GasLimit, data, input, store)
 }
 
 // getTxData returns the data to save against the callback encoded according to

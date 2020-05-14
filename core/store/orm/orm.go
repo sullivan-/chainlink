@@ -343,6 +343,32 @@ func (orm *ORM) AllSyncEvents(cb func(*models.SyncEvent) error) error {
 	})
 }
 
+// NOTE: Copied verbatim from gorm master
+// Transaction start a transaction as a block,
+// return error will rollback, otherwise to commit.
+func (orm *ORM) Transaction(fc func(tx *gorm.DB) error) (err error) {
+	tx := orm.db.Begin()
+	defer func() {
+		if r := recover(); r != nil {
+			err = fmt.Errorf("%s", r)
+			tx.Rollback()
+			return
+		}
+	}()
+
+	err = fc(tx)
+
+	if err == nil {
+		err = tx.Commit().Error
+	}
+
+	// Makesure rollback when Block error or Commit error
+	if err != nil {
+		tx.Rollback()
+	}
+	return
+}
+
 // convenientTransaction handles setup and teardown for a gorm database
 // transaction, handing off the database transaction to the callback parameter.
 // Encourages the use of transactions for gorm calls that translate
@@ -350,18 +376,7 @@ func (orm *ORM) AllSyncEvents(cb func(*models.SyncEvent) error) error {
 // in a database transaction.
 func (orm *ORM) convenientTransaction(callback func(*gorm.DB) error) error {
 	orm.MustEnsureAdvisoryLock()
-	dbtx := orm.db.Begin()
-	if dbtx.Error != nil {
-		return dbtx.Error
-	}
-	defer dbtx.Rollback()
-
-	err := callback(dbtx)
-	if err != nil {
-		return err
-	}
-
-	return dbtx.Commit().Error
+	return orm.Transaction(callback)
 }
 
 // OptimisticUpdateConflictError is returned when a record update failed
@@ -665,13 +680,13 @@ func (orm *ORM) IdempotentInsertEthTaskRunTransaction(taskRunID models.ID, fromA
 		FromAddress:    fromAddress,
 		ToAddress:      toAddress,
 		EncodedPayload: encodedPayload,
-		Value:          assets.NewEth(0),
+		Value:          assets.NewEthValue(0),
 		GasLimit:       gasLimit,
 	}
 	ethTaskRunTransaction := models.EthTaskRunTransaction{
 		TaskRunID: taskRunID.UUID(),
 	}
-	err := orm.convenientTransaction(func(dbtx *gorm.DB) error {
+	err := orm.Transaction(func(dbtx *gorm.DB) error {
 		if err := dbtx.Save(&ethTransaction).Error; err != nil {
 			return err
 		}
@@ -708,10 +723,17 @@ func (orm *ORM) IdempotentInsertEthTaskRunTransaction(taskRunID models.ID, fromA
 }
 
 // FindEthTaskRunTransactionByTaskRunID finds the EthTaskRunTransaction with its EthTransaction preloaded
-func (orm *ORM) FindEthTaskRunTransactionByTaskRunID(taskRunID models.ID) (*models.EthTaskRunTransaction, error) {
-	etrt := &models.EthTaskRunTransaction{}
-	err := orm.db.Preload("EthTransaction").First(etrt, "task_run_id = ?", &taskRunID).Error
+func (orm *ORM) FindEthTaskRunTransactionByTaskRunID(taskRunID models.ID) (models.EthTaskRunTransaction, error) {
+	etrt := models.EthTaskRunTransaction{}
+	err := orm.db.Preload("EthTransaction").First(&etrt, "task_run_id = ?", &taskRunID).Error
 	return etrt, err
+}
+
+// FindEthTransactionWithAttempts finds the EthTransaction with its attempts preloaded
+func (orm *ORM) FindEthTransactionWithAttempts(ethTransactionID int64) (models.EthTransaction, error) {
+	etx := models.EthTransaction{}
+	err := orm.db.Preload("EthTransactionAttempts").First(&etx, "id = ?", &ethTransactionID).Error
+	return etx, err
 }
 
 // CreateTx finds and overwrites a transaction by its surrogate key, if it exists, or
@@ -1384,6 +1406,11 @@ func (orm *ORM) getRecords(collection interface{}, order string, offset, limit i
 func (orm *ORM) RawDB(fn func(*gorm.DB) error) error {
 	orm.MustEnsureAdvisoryLock()
 	return fn(orm.db)
+}
+
+// NOTE: Skips advisory lock, use caution!
+func (orm *ORM) GetRawDB() *gorm.DB {
+	return orm.db
 }
 
 // Batch is an iterator _like_ for batches of records

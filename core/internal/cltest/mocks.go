@@ -27,6 +27,7 @@ import (
 	"github.com/smartcontractkit/chainlink/core/store/orm"
 
 	"github.com/ethereum/go-ethereum/common"
+	"github.com/ethereum/go-ethereum/rpc"
 	"github.com/onsi/gomega"
 	"github.com/robfig/cron/v3"
 	"github.com/stretchr/testify/assert"
@@ -77,6 +78,11 @@ type EthMock struct {
 	context        string
 	strict         bool
 	t              testing.TB
+}
+
+func (mock *EthMock) RPCClient() *rpc.Client {
+	c := rpc.Client{}
+	return &c
 }
 
 // Dial mock dial

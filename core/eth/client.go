@@ -10,6 +10,7 @@ import (
 	ethereum "github.com/ethereum/go-ethereum"
 	"github.com/ethereum/go-ethereum/common"
 	"github.com/ethereum/go-ethereum/common/hexutil"
+	"github.com/ethereum/go-ethereum/rpc"
 )
 
 //go:generate mockery -name Client -output ../internal/mocks/ -case=underscore
@@ -64,6 +65,7 @@ var _ Client = (*CallerSubscriberClient)(nil)
 type CallerSubscriber interface {
 	Call(result interface{}, method string, args ...interface{}) error
 	Subscribe(context.Context, interface{}, ...interface{}) (Subscription, error)
+	RPCClient() *rpc.Client
 }
 
 // GetNonce returns the nonce (transaction count) for a given address.

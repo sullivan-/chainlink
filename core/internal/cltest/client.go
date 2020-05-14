@@ -14,6 +14,7 @@ import (
 	"github.com/ethereum/go-ethereum/common"
 	"github.com/ethereum/go-ethereum/common/hexutil"
 	"github.com/ethereum/go-ethereum/core/types"
+	"github.com/ethereum/go-ethereum/rpc"
 	"github.com/pkg/errors"
 
 	"github.com/smartcontractkit/chainlink/core/assets"
@@ -29,6 +30,11 @@ type SimulatedBackendClient struct {
 	b       *backends.SimulatedBackend
 	t       testing.TB
 	chainId int
+}
+
+func (c *SimulatedBackendClient) RPCClient() *rpc.Client {
+	rpcClient := rpc.Client{}
+	return &rpcClient
 }
 
 // Close terminates the underlying blockchain's update loop.
