@@ -26,6 +26,8 @@ func TestTxBroadcaster_NewBulletproofTxManager(t *testing.T) {
 }
 
 func TestBulletproofTxManager_ProcessUnbroadcastEthTransactions_Success(t *testing.T) {
+	t.Parallel()
+
 	store, cleanup := cltest.NewStore(t)
 	defer cleanup()
 	// Use the real KeyStore loaded from database fixtures
@@ -200,6 +202,8 @@ func TestBulletproofTxManager_ProcessUnbroadcastEthTransactions_Success(t *testi
 }
 
 func TestBulletproofTxManager_ProcessUnbroadcastEthTransactions_ResumingFromCrash(t *testing.T) {
+	t.Parallel()
+
 	store, cleanup := cltest.NewStore(t)
 	defer cleanup()
 	// Use the real KeyStore loaded from database fixtures

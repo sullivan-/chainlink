@@ -1548,6 +1548,7 @@ func TestORM_EthTaskRunTransaction(t *testing.T) {
 	tc, orm, cleanup := cltest.BootstrapThrowawayORM(t, "eth_task_run_transactions", true, true)
 	defer cleanup()
 	store, cleanup := cltest.NewStoreWithConfig(tc)
+	store.ORM = orm
 	defer cleanup()
 
 	sharedTaskRunID := cltest.MustInsertTaskRun(t, store)
