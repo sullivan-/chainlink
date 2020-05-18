@@ -94,7 +94,6 @@ func TestBulletproofTxManager_ProcessUnbroadcastEthTransactions_Success(t *testi
 			GasLimit:       gasLimit,
 			CreatedAt:      time.Unix(0, 0),
 		}
-		// Earlier
 		gethClient.On("SendTransaction", mock.Anything, mock.MatchedBy(func(tx *gethTypes.Transaction) bool {
 			if tx.Nonce() != uint64(0) {
 				return false
@@ -328,10 +327,46 @@ func TestBulletproofTxManager_ProcessUnbroadcastEthTransactions_ResumingFromCras
 }
 
 func TestBulletproofTxManager_ProcessUnbroadcastEthTransactions_Errors(t *testing.T) {
-	// SAD
+	t.Parallel()
 
-	// - external client sent something which got confirmed and now nonce is too low
-	// t.Run("external wallet messed with the account and now the nonce has already been used",
+	store, cleanup := cltest.NewStore(t)
+	defer cleanup()
+	// Use the real KeyStore loaded from database fixtures
+	store.KeyStore.Unlock(cltest.Password)
+
+	config, cleanup := cltest.NewConfig(t)
+	gethClient := new(mocks.GethClient)
+	gethWrapper := cltest.NewSimpleGethWrapper(gethClient)
+	eb := bulletprooftxmanager.NewEthBroadcaster(store, gethWrapper, config)
+
+	keys, err := store.Keys()
+	require.NoError(t, err)
+	defaultFromAddress := keys[0].Address.Address()
+	toAddress := gethCommon.HexToAddress("0x6C03DDA95a2AEd917EeCc6eddD4b9D16E6380411")
+	// timeNow := time.Now()
+
+	value := assets.NewEthValue(142)
+	gasLimit := uint64(242)
+	encodedPayload := []byte{0, 1}
+	initialNonce := int64(916714082576372858)
+
+	t.Run("external wallet messed with the account and now the nonce has already been used giving 'nonce too low' error", func(t *testing.T) {
+		ethTransaction := models.EthTransaction{
+			ToAddress:      toAddress,
+			EncodedPayload: []byte{42, 42, 0},
+			Value:          value,
+			GasLimit:       gasLimit,
+			CreatedAt:      time.Unix(0, 0),
+		}
+		require.NoError(t, store.GetRawDB().Save(&ethTransaction).Error)
+		gethClient.On("SendTransaction", mock.Anything, mock.MatchedBy(func(tx *gethTypes.Transaction) bool {
+			return tx.Nonce() == uint64(0)
+		})).Return(errors.New("nonce too low"))
+
+		// Do the thing
+		require.NoError(t, eb.ProcessUnbroadcastEthTransactions())
+
+	})
 
 	// - key is gone from database (no matching address) - mock keystore to return error "authentication needed: password or unlock"
 	// - keystore does not have the unlocked key
@@ -340,6 +375,13 @@ func TestBulletproofTxManager_ProcessUnbroadcastEthTransactions_Errors(t *testin
 	// - gethClient failes with RETRYABLE UNCONFIRMED (various types)
 	// - does it send successful one after failed?
 	// - external client sent something which is in mempool and now we get "replacement transaction underpriced"
+	// - reloading nonce fails
+	// - TODO: Check what error we get if we resubmit an identical transaction that is in mempool
+	// - TODO: Check what error we get if we resubmit an identical transaction that is confirmed
+}
+
+func TestBulletproofTxManager_ProcessUnbroadcastEthTransactions_ComplexTest(t *testing.T) {
+	// Multiple tx's, some of which fail with different errors on multiple occasions over multiple calls
 }
 
 func TestBulletproofTxManager_GetDefaultAddress(t *testing.T) {
@@ -396,7 +438,7 @@ func TestBulletproofTxManager_ReloadNonceFromEthClient(t *testing.T) {
 		})).Return(uint64(remoteNonce), nil)
 		require.NoError(t, bulletprooftxmanager.ReloadNonceFromEthClient(store, gethWrapper, localAddress))
 
-		// Database nonce was updated
+		// Database nonce was not updated
 		var key models.Key
 		require.NoError(t, store.GetRawDB().First(&key).Error)
 		require.Equal(t, localNonce, key.Nonce)
@@ -414,7 +456,7 @@ func TestBulletproofTxManager_ReloadNonceFromEthClient(t *testing.T) {
 		})).Return(uint64(remoteNonce), nil)
 		require.NoError(t, bulletprooftxmanager.ReloadNonceFromEthClient(store, gethWrapper, localAddress))
 
-		// Database nonce was updated
+		// Database nonce was not updated
 		var key models.Key
 		require.NoError(t, store.GetRawDB().First(&key).Error)
 		require.Equal(t, localNonce, key.Nonce)

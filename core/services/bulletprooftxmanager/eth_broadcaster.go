@@ -36,7 +36,17 @@ type EthBroadcaster interface {
 
 // ethBroadcaster monitors eth_transactions for transactions that need to
 // be broadcast, assigns nonces and ensures that at least one eth node
-// somewhere has received the transaction successfully
+// somewhere has received the transaction successfully.
+//
+// This does not guarantee delivery! A whole host of other things can
+// subsequently go wrong such as transctions being evicted from the mempool,
+// eth nodes going offline etc. Responsibility for ensuring eventual inclusion
+// into the chain falls on the shoulders of the ethConfirmer.
+//
+// What ethBroadcaster does guarantee is:
+// - a finalised nonce
+// - existence of a saved eth_transaction_attempt
+// - that the transaction is valid and can be accepted by an eth node (and if not, it is saved with an error)
 type ethBroadcaster struct {
 	store             *store.Store
 	gethClientWrapper store.GethClientWrapper
@@ -117,6 +127,7 @@ func (eb *ethBroadcaster) ProcessUnbroadcastEthTransactions() error {
 	}
 
 	for {
+		// TODO: Add total attempts count for transactions and maybe mark as error if some limit is exceeded?
 		ethTransaction, err := nextUnbroadcastTransactionWithNonce(eb.store, defaultAddress)
 		if err != nil {
 			// Unexpected fatal error
@@ -134,7 +145,10 @@ func (eb *ethBroadcaster) ProcessUnbroadcastEthTransactions() error {
 			errString := unretryableError.Error()
 			ethTransaction.Nonce = nil
 			ethTransaction.Error = &errString
-			if err := eb.store.GetRawDB().Save(ethTransaction).Error; err != nil {
+			err := eb.store.RawDB(func(db *gorm.DB) error {
+				return db.Save(ethTransaction).Error
+			})
+			if err != nil {
 				// Unexpected fatal error
 				return err
 			}
@@ -152,6 +166,7 @@ func (eb *ethBroadcaster) ProcessUnbroadcastEthTransactions() error {
 	}
 }
 
+// TODO: Write short doc
 func nextUnbroadcastTransactionWithNonce(store *store.Store, defaultAddress gethCommon.Address) (*models.EthTransaction, error) {
 	ethTransaction := &models.EthTransaction{}
 	err := store.Transaction(func(tx *gorm.DB) error {
@@ -184,6 +199,7 @@ func nextUnbroadcastTransactionWithNonce(store *store.Store, defaultAddress geth
 	return ethTransaction, err
 }
 
+// TODO: Needs indexing optimization
 func findNextUnbroadcastTransaction(tx *gorm.DB, ethTransaction *models.EthTransaction) error {
 	return tx.
 		Where("error IS NULL AND broadcast_at IS NULL").
@@ -219,6 +235,7 @@ func GetAndIncrementNonce(tx *gorm.DB, address gethCommon.Address) (int64, error
 // TODO: Write this doc
 // If this function returns an error, that error is in the class of FATAL
 // UNCONFIRMED and will not ever give a different result on retry.
+// TODO: convert transaction / attempt to pointers and return only error
 func (eb *ethBroadcaster) send(ethTransaction models.EthTransaction, gasPrice *big.Int) (models.EthTransactionAttempt, error) {
 	attempt := models.EthTransactionAttempt{}
 	if ethTransaction.Nonce == nil {
@@ -247,28 +264,32 @@ func (eb *ethBroadcaster) send(ethTransaction models.EthTransaction, gasPrice *b
 	attempt.GasPrice = *utils.NewBig(gasPrice)
 
 	err = sendTransactionWithRetry(eb.gethClientWrapper, signedTransaction)
-	if err == nil {
-		return attempt, nil
-	} else if isAlreadyInMempool(err) {
-		logger.Debugw("transaction was already submitted", "err", err, "ethTransactionID", ethTransaction.ID)
-		return attempt, nil
-	} else if isAlreadyMined(err) {
-		// TODO: Get receipt and write hash/block details here?
-		logger.Debugw("transaction was already mined in block with hash", "err", err, "ethTransactionID", ethTransaction.ID)
-		return attempt, nil
-	} else if isNonceTooLowError(err) {
+
+	if isNonceTooLowError(err) {
 		logger.Error("nonce of %v was too low, it appears that address %s has been used by another wallet", *ethTransaction.Nonce, ethTransaction.FromAddress.String())
-		if err := ReloadNonceFromEthClient(eb.store, eb.gethClientWrapper, *ethTransaction.FromAddress); err != nil {
-			return attempt, err
+
+		newNonce, err := ReloadNonceFromEthClient(eb.store, eb.gethClientWrapper, *ethTransaction.FromAddress)
+		if err != nil {
+			// Something really went wrong here, maybe the eth node is offline?
+			// Let the transaction fall through and catch it on the next round
+			logger.Error(err)
+			return attempt, nil
 		}
-		// Allow it to get retried again on the next round
+		nonce := int64(newNonce)
+		// TODO: Does it save the nonce correctly?
+		if nonce > *ethTransaction.Nonce {
+			// Retry it with the higher nonce
+			ethTransaction.Nonce = &nonce
+			return eb.send(ethTransaction, gasPrice)
+		}
 		return attempt, nil
-	} else if isUnretryableError(err) {
-		return attempt, err
+	} else if isUnderpriced(err) {
+		// TODO: Bump gas immediately
 	}
+	// TODO: What if it was an http error or context timeout?
+	unretryableError := eb.handleError(err, ethTransaction)
 	// TODO: Enter retry loop here if didnt get response back from client due to network failure etc
-	logger.Errorw("transaction errored but it wasn't terminal. It may or may not have been sent. Will go into gas bumping loop", "err", err, "ethTransactionID", ethTransaction.ID)
-	return attempt, nil
+	return attempt, unretryableError
 }
 
 func sendTransactionWithRetry(gethClientWrapper store.GethClientWrapper, signedTransaction *gethTypes.Transaction) error {
@@ -278,6 +299,23 @@ func sendTransactionWithRetry(gethClientWrapper store.GethClientWrapper, signedT
 	return gethClientWrapper.GethClient(func(gethClient eth.GethClient) error {
 		return gethClient.SendTransaction(ctx, signedTransaction)
 	})
+}
+
+func (eb *ethBroadcaster) handleError(err error, ethTransaction models.EthTransaction) error {
+	if err == nil {
+		return nil
+	} else if isAlreadyInMempool(err) {
+		logger.Debugw("transaction was already submitted", "err", err, "ethTransactionID", ethTransaction.ID)
+		return nil
+	} else if isAlreadyMined(err) {
+		// TODO: Get receipt and write hash/block details here?
+		logger.Debugw("transaction was already mined in block with hash", "err", err, "ethTransactionID", ethTransaction.ID)
+		return nil
+	} else if isUnretryableError(err) {
+		return err
+	}
+	logger.Errorw("transaction errored but it wasn't terminal. It may or may not have been sent. Assuming it has been sent and handing off to the confirmer", "err", err, "ethTransactionID", ethTransaction.ID)
+	return nil
 }
 
 // Geth/parity returns this error if the transaction is already in the node's mempool
@@ -308,7 +346,7 @@ func isNonceTooLowError(err error) bool {
 	// TODO: Add parity error
 	fmt.Println("err", err)
 	fmt.Printf("err: %#v\n", err)
-	return err.Error() == "nonce too low"
+	return err.Error() == "nonce too low" || err.Error() == "replacement transaction underpriced"
 }
 
 // Geth/parity returns these errors if the transaction failed in such a way that:
@@ -349,10 +387,15 @@ func getDefaultKey(store *store.Store) (models.Key, error) {
 	return *availableKeys[0], nil
 }
 
-// ReloadNonceFromEthClient queries the eth node for the latest nonce including transactions in the mempool
-// This should almost never be necessary in normal operation unless the node operator has re-used their account somewhere else.
-// It is generally safe to call this method as many times as you like because it will only ever increase the nonce, never decrease it.
-func ReloadNonceFromEthClient(store *store.Store, gethClientWrapper store.GethClientWrapper, address gethCommon.Address) error {
+// ReloadNonceFromEthClient queries the eth node for the latest nonce including
+// transactions in the mempool.
+//
+// This should almost never be necessary in normal operation unless the node
+// operator has re-used their account somewhere else.
+//
+// It is generally safe to call this method as many times as you like because
+// it can only ever increase the nonce, never decrease it.
+func ReloadNonceFromEthClient(store *store.Store, gethClientWrapper store.GethClientWrapper, address gethCommon.Address) (uint64, error) {
 	var nonce uint64
 	err := gethClientWrapper.GethClient(func(c eth.GethClient) error {
 		var err error
@@ -362,9 +405,9 @@ func ReloadNonceFromEthClient(store *store.Store, gethClientWrapper store.GethCl
 		return err
 	})
 	if err != nil {
-		return err
+		return nonce, err
 	}
-	return store.RawDB(func(db *gorm.DB) error {
+	return nonce, store.RawDB(func(db *gorm.DB) error {
 		res := db.Exec("UPDATE keys SET nonce = ? WHERE address = ? AND nonce < ?", nonce, address, nonce)
 		if res.Error != nil {
 			return res.Error
