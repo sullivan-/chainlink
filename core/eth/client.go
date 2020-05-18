@@ -10,8 +10,15 @@ import (
 	ethereum "github.com/ethereum/go-ethereum"
 	"github.com/ethereum/go-ethereum/common"
 	"github.com/ethereum/go-ethereum/common/hexutil"
-	"github.com/ethereum/go-ethereum/rpc"
+	gethTypes "github.com/ethereum/go-ethereum/core/types"
 )
+
+// GethClient is an interface that represents go-ethereum's own ethclient
+// https://github.com/ethereum/go-ethereum/blob/master/ethclient/ethclient.go
+//go:generate mockery -name GethClient -output ../internal/mocks/ -case=underscore
+type GethClient interface {
+	SendTransaction(context.Context, *gethTypes.Transaction) error
+}
 
 //go:generate mockery -name Client -output ../internal/mocks/ -case=underscore
 
@@ -65,7 +72,7 @@ var _ Client = (*CallerSubscriberClient)(nil)
 type CallerSubscriber interface {
 	Call(result interface{}, method string, args ...interface{}) error
 	Subscribe(context.Context, interface{}, ...interface{}) (Subscription, error)
-	RPCClient() *rpc.Client
+	GethClient(func(gethClient GethClient) error) error
 }
 
 // GetNonce returns the nonce (transaction count) for a given address.

@@ -1547,7 +1547,7 @@ func TestORM_EthTaskRunTransaction(t *testing.T) {
 	// rollback due to constraint violation for this function
 	tc, orm, cleanup := cltest.BootstrapThrowawayORM(t, "eth_task_run_transactions", true, true)
 	defer cleanup()
-	store, cleanup := cltest.NewStoreWithConfig(t, tc)
+	store, cleanup := cltest.NewStoreWithConfig(tc)
 	defer cleanup()
 
 	sharedTaskRunID := cltest.MustInsertTaskRun(t, store)

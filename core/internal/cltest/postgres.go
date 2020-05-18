@@ -4,8 +4,11 @@ import (
 	"database/sql"
 	"errors"
 	"fmt"
+	"io/ioutil"
 	"net/url"
 	"os"
+	"path"
+	"runtime"
 	"testing"
 
 	"github.com/jinzhu/gorm"

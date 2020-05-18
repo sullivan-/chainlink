@@ -33,7 +33,8 @@ func TestBulletproofTxManager_ProcessUnbroadcastEthTransactions_Success(t *testi
 
 	config, cleanup := cltest.NewConfig(t)
 	gethClient := new(mocks.GethClientInterface)
-	eb := bulletprooftxmanager.NewEthBroadcaster(store, gethClient, config)
+	gethWrapper := cltest.NewSimpleGethWrapper(gethClient)
+	eb := bulletprooftxmanager.NewEthBroadcaster(store, gethWrapper, config)
 
 	keys, err := store.Keys()
 	require.NoError(t, err)
@@ -206,7 +207,8 @@ func TestBulletproofTxManager_ProcessUnbroadcastEthTransactions_ResumingFromCras
 
 	config, cleanup := cltest.NewConfig(t)
 	gethClient := new(mocks.GethClientInterface)
-	eb := bulletprooftxmanager.NewEthBroadcaster(store, gethClient, config)
+	gethWrapper := cltest.NewSimpleGethWrapper(gethClient)
+	eb := bulletprooftxmanager.NewEthBroadcaster(store, gethWrapper, config)
 
 	keys, err := store.Keys()
 	require.NoError(t, err)

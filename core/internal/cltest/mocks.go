@@ -27,7 +27,6 @@ import (
 	"github.com/smartcontractkit/chainlink/core/store/orm"
 
 	"github.com/ethereum/go-ethereum/common"
-	"github.com/ethereum/go-ethereum/rpc"
 	"github.com/onsi/gomega"
 	"github.com/robfig/cron/v3"
 	"github.com/stretchr/testify/assert"
@@ -68,6 +67,20 @@ func MockEthOnStore(t testing.TB, s *store.Store, flags ...string) *EthMock {
 	return mock
 }
 
+// SimpleGethWrapper offers an easy way to mock the eth client
+type SimpleGethWrapper struct {
+	c eth.GethClient
+}
+
+func NewSimpleGethWrapper(c eth.GethClient) *SimpleGethWrapper {
+	wrapper := SimpleGethWrapper{c: c}
+	return &wrapper
+}
+
+func (wrapper *SimpleGethWrapper) GethClient(f func(c eth.GethClient) error) error {
+	return f(wrapper.c)
+}
+
 // EthMock is a mock ethereum client
 type EthMock struct {
 	Responses      []MockResponse
@@ -80,9 +93,9 @@ type EthMock struct {
 	t              testing.TB
 }
 
-func (mock *EthMock) RPCClient() *rpc.Client {
-	c := rpc.Client{}
-	return &c
+// GethClient is a noop, solely needed to conform to GethClientWrapper interface
+func (mock *EthMock) GethClient(f func(c eth.GethClient) error) error {
+	return nil
 }
 
 // Dial mock dial

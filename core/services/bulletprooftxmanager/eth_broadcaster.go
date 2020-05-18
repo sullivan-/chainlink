@@ -8,6 +8,7 @@ import (
 	"sync"
 	"time"
 
+	"github.com/smartcontractkit/chainlink/core/eth"
 	"github.com/smartcontractkit/chainlink/core/logger"
 	"github.com/smartcontractkit/chainlink/core/store"
 	"github.com/smartcontractkit/chainlink/core/store/models"
@@ -36,9 +37,9 @@ type EthBroadcaster interface {
 // be broadcast, assigns nonces and ensures that at least one eth node
 // somewhere has received the transaction successfully
 type ethBroadcaster struct {
-	store      *store.Store
-	gethClient store.GethClient
-	config     orm.ConfigReader
+	store             *store.Store
+	gethClientWrapper store.GethClientWrapper
+	config            orm.ConfigReader
 
 	started    bool
 	stateMutex sync.RWMutex
@@ -47,13 +48,13 @@ type ethBroadcaster struct {
 	chDone chan struct{}
 }
 
-func NewEthBroadcaster(store *store.Store, gethClient store.GethClient, config orm.ConfigReader) EthBroadcaster {
+func NewEthBroadcaster(store *store.Store, gethClientWrapper store.GethClientWrapper, config orm.ConfigReader) EthBroadcaster {
 	return &ethBroadcaster{
-		store:      store,
-		gethClient: gethClient,
-		config:     config,
-		chStop:     make(chan struct{}),
-		chDone:     make(chan struct{}),
+		store:             store,
+		gethClientWrapper: gethClientWrapper,
+		config:            config,
+		chStop:            make(chan struct{}),
+		chDone:            make(chan struct{}),
 	}
 }
 
@@ -207,6 +208,7 @@ func GetAndIncrementNonce(tx *gorm.DB, address gethCommon.Address) (int64, error
 	var nonce *int64
 	row := tx.Raw("UPDATE keys SET nonce = nonce + 1 WHERE address = ? RETURNING nonce - 1", address).Row()
 	if err := row.Scan(&nonce); err != nil {
+		logger.Error(err)
 		return 0, err
 	}
 	return *nonce, nil
@@ -243,7 +245,7 @@ func (eb *ethBroadcaster) send(ethTransaction models.EthTransaction, gasPrice *b
 	attempt.EthTransactionID = ethTransaction.ID
 	attempt.GasPrice = *utils.NewBig(gasPrice)
 
-	err = sendTransactionWithRetry(eb.gethClient, signedTransaction)
+	err = sendTransactionWithRetry(eb.gethClientWrapper, signedTransaction)
 	if err == nil {
 		return attempt, nil
 	} else if isAlreadyInMempool(err) {
@@ -261,11 +263,13 @@ func (eb *ethBroadcaster) send(ethTransaction models.EthTransaction, gasPrice *b
 	return attempt, nil
 }
 
-func sendTransactionWithRetry(client store.GethClient, signedTransaction *gethTypes.Transaction) error {
+func sendTransactionWithRetry(gethClientWrapper store.GethClientWrapper, signedTransaction *gethTypes.Transaction) error {
 	// TODO: Write some retry logic here, what if client is not connected?
 	// TODO: Add timeout to context
 	ctx := context.Background()
-	return client.SendTransaction(ctx, signedTransaction)
+	return gethClientWrapper.GethClient(func(gethClient eth.GethClient) error {
+		return gethClient.SendTransaction(ctx, signedTransaction)
+	})
 }
 
 // Geth/parity returns this error if the transaction is already in the node's mempool

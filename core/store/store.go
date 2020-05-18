@@ -17,7 +17,6 @@ import (
 	"github.com/smartcontractkit/chainlink/core/store/orm"
 	"github.com/smartcontractkit/chainlink/core/utils"
 
-	gethTypes "github.com/ethereum/go-ethereum/core/types"
 	gethClient "github.com/ethereum/go-ethereum/ethclient"
 	"github.com/ethereum/go-ethereum/rpc"
 	"github.com/jinzhu/gorm"
@@ -32,23 +31,21 @@ const (
 	AutoMigrate = "auto_migrate"
 )
 
-// https://github.com/ethereum/go-ethereum/blob/master/ethclient/ethclient.go
-//go:generate mockery -name GethClient -output ../internal/mocks/ -case=underscore
-type GethClient interface {
-	SendTransaction(context.Context, *gethTypes.Transaction) error
+type GethClientWrapper interface {
+	GethClient(func(gethClient eth.GethClient) error) error
 }
 
 // Store contains fields for the database, Config, KeyStore, and TxManager
 // for keeping the application state in sync with the database.
 type Store struct {
 	*orm.ORM
-	Config      *orm.Config
-	Clock       utils.AfterNower
-	KeyStore    KeyStoreInterface
-	VRFKeyStore *VRFKeyStore
-	TxManager   TxManager
-	GethClient  GethClient
-	closeOnce   *sync.Once
+	Config            *orm.Config
+	Clock             utils.AfterNower
+	KeyStore          KeyStoreInterface
+	VRFKeyStore       *VRFKeyStore
+	TxManager         TxManager
+	GethClientWrapper GethClientWrapper
+	closeOnce         *sync.Once
 }
 
 type lazyRPCWrapper struct {
@@ -75,10 +72,6 @@ func newLazyRPCWrapper(urlString string, limiter *rate.Limiter) (eth.CallerSubsc
 	}, nil
 }
 
-func (wrapper *lazyRPCWrapper) RPCClient() *rpc.Client {
-	return wrapper.client
-}
-
 // lazyDialInitializer initializes the Dial instance used to interact with
 // an ethereum node using the Double-checked locking optimization:
 // https://en.wikipedia.org/wiki/Double-checked_locking
@@ -99,6 +92,22 @@ func (wrapper *lazyRPCWrapper) lazyDialInitializer() error {
 		wrapper.initialized.Set()
 	}
 	return nil
+}
+
+// GethClient allows callers to access go-ethereum's ethclient through the
+// wrapper's rate limiting
+func (wrapper *lazyRPCWrapper) GethClient(callback func(gethClient eth.GethClient) error) error {
+	err := wrapper.lazyDialInitializer()
+	if err != nil {
+		return err
+	}
+	ctx, cancel := context.WithTimeout(context.Background(), 30*time.Second)
+	defer cancel()
+	wrapper.limiter.Wait(ctx)
+
+	client := gethClient.NewClient(wrapper.client)
+
+	return callback(client)
 }
 
 func (wrapper *lazyRPCWrapper) Call(result interface{}, method string, args ...interface{}) error {
@@ -192,19 +201,18 @@ func newStoreWithDialerAndKeyStore(
 	callerSubscriberClient := &eth.CallerSubscriberClient{CallerSubscriber: ethrpc}
 	txManager := NewEthTxManager(callerSubscriberClient, config, keyStore, orm)
 
-	connectedGethClient := gethClient.NewClient(ethrpc.RPCClient())
 	if err != nil {
 		logger.Fatalf("Unable to dial ETH client: %+v", err)
 	}
 
 	store := &Store{
-		Clock:      utils.Clock{},
-		Config:     config,
-		KeyStore:   keyStore,
-		ORM:        orm,
-		TxManager:  txManager,
-		GethClient: connectedGethClient,
-		closeOnce:  &sync.Once{},
+		Clock:             utils.Clock{},
+		Config:            config,
+		KeyStore:          keyStore,
+		ORM:               orm,
+		TxManager:         txManager,
+		GethClientWrapper: ethrpc,
+		closeOnce:         &sync.Once{},
 	}
 	store.VRFKeyStore = NewVRFKeyStore(store)
 	return store

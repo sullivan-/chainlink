@@ -14,7 +14,6 @@ import (
 	"github.com/ethereum/go-ethereum/common"
 	"github.com/ethereum/go-ethereum/common/hexutil"
 	"github.com/ethereum/go-ethereum/core/types"
-	"github.com/ethereum/go-ethereum/rpc"
 	"github.com/pkg/errors"
 
 	"github.com/smartcontractkit/chainlink/core/assets"
@@ -32,9 +31,9 @@ type SimulatedBackendClient struct {
 	chainId int
 }
 
-func (c *SimulatedBackendClient) RPCClient() *rpc.Client {
-	rpcClient := rpc.Client{}
-	return &rpcClient
+// GethClient is a noop, solely needed to conform to GethClientWrapper interface
+func (c *SimulatedBackendClient) GethClient(f func(c eth.GethClient) error) error {
+	return nil
 }
 
 // Close terminates the underlying blockchain's update loop.
