@@ -18,6 +18,7 @@ import (
 //go:generate mockery -name GethClient -output ../internal/mocks/ -case=underscore
 type GethClient interface {
 	SendTransaction(context.Context, *gethTypes.Transaction) error
+	PendingNonceAt(ctx context.Context, account common.Address) (uint64, error)
 }
 
 //go:generate mockery -name Client -output ../internal/mocks/ -case=underscore

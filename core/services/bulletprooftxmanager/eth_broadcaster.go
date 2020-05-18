@@ -4,6 +4,7 @@ import (
 	"bytes"
 	"context"
 	"errors"
+	"fmt"
 	"math/big"
 	"sync"
 	"time"
@@ -186,7 +187,7 @@ func nextUnbroadcastTransactionWithNonce(store *store.Store, defaultAddress geth
 func findNextUnbroadcastTransaction(tx *gorm.DB, ethTransaction *models.EthTransaction) error {
 	return tx.
 		Where("error IS NULL AND broadcast_at IS NULL").
-		Order("created_at ASC, id ASC").
+		Order("nonce ASC NULLS LAST, created_at ASC, id ASC").
 		First(ethTransaction).
 		Error
 }
@@ -255,6 +256,13 @@ func (eb *ethBroadcaster) send(ethTransaction models.EthTransaction, gasPrice *b
 		// TODO: Get receipt and write hash/block details here?
 		logger.Debugw("transaction was already mined in block with hash", "err", err, "ethTransactionID", ethTransaction.ID)
 		return attempt, nil
+	} else if isNonceTooLowError(err) {
+		logger.Error("nonce of %v was too low, it appears that address %s has been used by another wallet", *ethTransaction.Nonce, ethTransaction.FromAddress.String())
+		if err := ReloadNonceFromEthClient(eb.store, eb.gethClientWrapper, *ethTransaction.FromAddress); err != nil {
+			return attempt, err
+		}
+		// Allow it to get retried again on the next round
+		return attempt, nil
 	} else if isUnretryableError(err) {
 		return attempt, err
 	}
@@ -282,6 +290,25 @@ func isAlreadyInMempool(err error) bool {
 func isAlreadyMined(err error) bool {
 	// TODO
 	return false
+}
+
+// Geth/parity returns this error if a transaction with this nonce already
+// exists either on-chain or in the mempool.
+//
+// This can NEVER happen if the ethereum wallet is only used by the chainlink
+// node and BulletproofTxManager is enabled.
+//
+// If it does happen, it means the node operator manually sent a transaction
+// from another wallet using the same key.
+//
+// Since our local nonce tracking is now useless, we have no choice but to
+// reset to the geth node's view of the world no matter how unreliable that may
+// be.
+func isNonceTooLowError(err error) bool {
+	// TODO: Add parity error
+	fmt.Println("err", err)
+	fmt.Printf("err: %#v\n", err)
+	return err.Error() == "nonce too low"
 }
 
 // Geth/parity returns these errors if the transaction failed in such a way that:
@@ -320,4 +347,33 @@ func getDefaultKey(store *store.Store) (models.Key, error) {
 		return models.Key{}, errors.New("no keys available")
 	}
 	return *availableKeys[0], nil
+}
+
+// ReloadNonceFromEthClient queries the eth node for the latest nonce including transactions in the mempool
+// This should almost never be necessary in normal operation unless the node operator has re-used their account somewhere else.
+// It is generally safe to call this method as many times as you like because it will only ever increase the nonce, never decrease it.
+func ReloadNonceFromEthClient(store *store.Store, gethClientWrapper store.GethClientWrapper, address gethCommon.Address) error {
+	var nonce uint64
+	err := gethClientWrapper.GethClient(func(c eth.GethClient) error {
+		var err error
+		// TODO: Probably need to add a timeout or something
+		ctx := context.Background()
+		nonce, err = c.PendingNonceAt(ctx, address)
+		return err
+	})
+	if err != nil {
+		return err
+	}
+	return store.RawDB(func(db *gorm.DB) error {
+		res := db.Exec("UPDATE keys SET nonce = ? WHERE address = ? AND nonce < ?", nonce, address, nonce)
+		if res.Error != nil {
+			return res.Error
+		}
+		if res.RowsAffected == 0 {
+			logger.Warnf("new nonce of %v for account %s did not update any rows", nonce, address.String())
+		} else {
+			logger.Debugf("updated account %s with new nonce %v", address.String(), nonce)
+		}
+		return nil
+	})
 }

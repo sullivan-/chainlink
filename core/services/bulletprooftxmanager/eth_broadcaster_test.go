@@ -34,7 +34,7 @@ func TestBulletproofTxManager_ProcessUnbroadcastEthTransactions_Success(t *testi
 	store.KeyStore.Unlock(cltest.Password)
 
 	config, cleanup := cltest.NewConfig(t)
-	gethClient := new(mocks.GethClientInterface)
+	gethClient := new(mocks.GethClient)
 	gethWrapper := cltest.NewSimpleGethWrapper(gethClient)
 	eb := bulletprooftxmanager.NewEthBroadcaster(store, gethWrapper, config)
 
@@ -210,7 +210,7 @@ func TestBulletproofTxManager_ProcessUnbroadcastEthTransactions_ResumingFromCras
 	store.KeyStore.Unlock(cltest.Password)
 
 	config, cleanup := cltest.NewConfig(t)
-	gethClient := new(mocks.GethClientInterface)
+	gethClient := new(mocks.GethClient)
 	gethWrapper := cltest.NewSimpleGethWrapper(gethClient)
 	eb := bulletprooftxmanager.NewEthBroadcaster(store, gethWrapper, config)
 
@@ -327,18 +327,18 @@ func TestBulletproofTxManager_ProcessUnbroadcastEthTransactions_ResumingFromCras
 	// t.Run("previous run assigned nonce and broadcast and is now confirmed")
 }
 
-func TestBulletproofTxManager_ProcessUnbroadcastEthTransactions_ChangingDefaultGasLimitAndRestartingErrorsJobsInFlight(t *testing.T) {
-}
-
 func TestBulletproofTxManager_ProcessUnbroadcastEthTransactions_Errors(t *testing.T) {
 	// SAD
+
+	// - external client sent something which got confirmed and now nonce is too low
+	// t.Run("external wallet messed with the account and now the nonce has already been used",
+
 	// - key is gone from database (no matching address) - mock keystore to return error "authentication needed: password or unlock"
 	// - keystore does not have the unlocked key
 	// - tx signing fails
 	// - gethClient fails with FATAL UNCONFIRMED (various types)
 	// - gethClient failes with RETRYABLE UNCONFIRMED (various types)
 	// - does it send successful one after failed?
-	// - external client sent something which got confirmed and now nonce is too low
 	// - external client sent something which is in mempool and now we get "replacement transaction underpriced"
 }
 
@@ -363,4 +363,99 @@ func TestBulletproofTxManager_GetAndIncrementNonce(t *testing.T) {
 	// It incremented the nonce
 	require.NoError(t, store.GetRawDB().First(&key).Error)
 	require.Equal(t, int64(1), key.Nonce)
+}
+
+func TestBulletproofTxManager_ReloadNonceFromEthClient(t *testing.T) {
+	store, cleanup := cltest.NewStore(t)
+	defer cleanup()
+
+	localAddress := gethCommon.HexToAddress("0x3cb8e3FD9d27e39a5e9e6852b0e96160061fd4ea")
+	localNonce := int64(10)
+	require.NoError(t, store.GetRawDB().Exec(`UPDATE keys SET nonce = ? WHERE address = ?`, localNonce, localAddress).Error)
+
+	t.Run("does nothing if account is not in keys table", func(t *testing.T) {
+		missingLocalAddress := cltest.NewAddress()
+
+		gethClient := new(mocks.GethClient)
+		gethWrapper := cltest.NewSimpleGethWrapper(gethClient)
+		gethClient.On("PendingNonceAt", mock.Anything, mock.MatchedBy(func(a gethCommon.Address) bool {
+			return a == missingLocalAddress
+		})).Return(uint64(42), nil)
+		require.NoError(t, bulletprooftxmanager.ReloadNonceFromEthClient(store, gethWrapper, missingLocalAddress))
+
+		gethClient.AssertExpectations(t)
+	})
+
+	t.Run("does nothing if eth node's nonce is less than the current one", func(t *testing.T) {
+		remoteNonce := uint64(5)
+
+		gethClient := new(mocks.GethClient)
+		gethWrapper := cltest.NewSimpleGethWrapper(gethClient)
+		gethClient.On("PendingNonceAt", mock.Anything, mock.MatchedBy(func(a gethCommon.Address) bool {
+			return a == localAddress
+		})).Return(uint64(remoteNonce), nil)
+		require.NoError(t, bulletprooftxmanager.ReloadNonceFromEthClient(store, gethWrapper, localAddress))
+
+		// Database nonce was updated
+		var key models.Key
+		require.NoError(t, store.GetRawDB().First(&key).Error)
+		require.Equal(t, localNonce, key.Nonce)
+
+		gethClient.AssertExpectations(t)
+	})
+
+	t.Run("does nothing if eth node's nonce is the same as the current one", func(t *testing.T) {
+		remoteNonce := localNonce
+
+		gethClient := new(mocks.GethClient)
+		gethWrapper := cltest.NewSimpleGethWrapper(gethClient)
+		gethClient.On("PendingNonceAt", mock.Anything, mock.MatchedBy(func(a gethCommon.Address) bool {
+			return a == localAddress
+		})).Return(uint64(remoteNonce), nil)
+		require.NoError(t, bulletprooftxmanager.ReloadNonceFromEthClient(store, gethWrapper, localAddress))
+
+		// Database nonce was updated
+		var key models.Key
+		require.NoError(t, store.GetRawDB().First(&key).Error)
+		require.Equal(t, localNonce, key.Nonce)
+
+		gethClient.AssertExpectations(t)
+	})
+
+	t.Run("does nothing and returns error if eth node returns error", func(t *testing.T) {
+		remoteNonce := uint64(1589808404872494000)
+
+		gethClient := new(mocks.GethClient)
+		gethWrapper := cltest.NewSimpleGethWrapper(gethClient)
+		gethClient.On("PendingNonceAt", mock.Anything, mock.MatchedBy(func(a gethCommon.Address) bool {
+			return a == localAddress
+		})).Return(uint64(remoteNonce), errors.New("something exploded"))
+		require.EqualError(t, bulletprooftxmanager.ReloadNonceFromEthClient(store, gethWrapper, localAddress), "something exploded")
+
+		// Database nonce was NOT updated
+		var key models.Key
+		require.NoError(t, store.GetRawDB().First(&key).Error)
+		require.Equal(t, localNonce, key.Nonce)
+
+		gethClient.AssertExpectations(t)
+	})
+
+	t.Run("updates local nonce if eth node's nonce is higher than the current one", func(t *testing.T) {
+		remoteNonce := uint64(1589808404872494000)
+
+		gethClient := new(mocks.GethClient)
+		gethWrapper := cltest.NewSimpleGethWrapper(gethClient)
+		gethClient.On("PendingNonceAt", mock.Anything, mock.MatchedBy(func(a gethCommon.Address) bool {
+			return a == localAddress
+		})).Return(uint64(remoteNonce), nil)
+		require.NoError(t, bulletprooftxmanager.ReloadNonceFromEthClient(store, gethWrapper, localAddress))
+
+		// Database nonce was updated
+		var key models.Key
+		require.NoError(t, store.GetRawDB().First(&key).Error)
+		require.Equal(t, int64(remoteNonce), key.Nonce)
+
+		gethClient.AssertExpectations(t)
+	})
+
 }

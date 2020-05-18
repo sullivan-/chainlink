@@ -51,6 +51,7 @@ func (etx *EthTx) Perform(input models.RunInput, store *strpkg.Store) models.Run
 	}
 }
 
+// TODO: Stop resuming on every run
 func (etx *EthTx) perform(input models.RunInput, store *strpkg.Store) models.RunOutput {
 	fmt.Println("GasLimit", etx.GasLimit)
 	value, err := getTxData(etx, input)
@@ -74,6 +75,8 @@ func (etx *EthTx) perform(input models.RunInput, store *strpkg.Store) models.Run
 	if err := store.IdempotentInsertEthTaskRunTransaction(taskRunID, fromAddress, toAddress, encodedPayload, gasLimit); err != nil {
 		return models.NewRunOutputError(err)
 	}
+
+	// TODO: Check state of tx attempts here to correctly mark job?
 
 	return models.NewRunOutputPendingOutgoingConfirmationsWithData(input.Data())
 }
