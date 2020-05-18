@@ -259,7 +259,7 @@ func (eb *ethBroadcaster) send(ethTransaction models.EthTransaction, gasPrice *b
 		return attempt, err
 	}
 	// TODO: Enter retry loop here if didnt get response back from client due to network failure etc
-	logger.Errorw("transaction errored but it wasn't fatal. It may or may not have been sent. Will go into gas bumping loop", "err", err, "ethTransactionID", ethTransaction.ID)
+	logger.Errorw("transaction errored but it wasn't terminal. It may or may not have been sent. Will go into gas bumping loop", "err", err, "ethTransactionID", ethTransaction.ID)
 	return attempt, nil
 }
 

@@ -32,7 +32,7 @@ type EthTx struct {
 	DataPrefix       hexutil.Bytes        `json:"dataPrefix"`
 	DataFormat       string               `json:"format"`
 	GasPrice         *utils.Big           `json:"gasPrice" gorm:"type:numeric"`
-	GasLimit         uint64               `json:"gasLimit"`
+	GasLimit         *uint64              `json:"gasLimit"`
 }
 
 // TaskType returns the type of Adapter.
@@ -52,6 +52,7 @@ func (etx *EthTx) Perform(input models.RunInput, store *strpkg.Store) models.Run
 }
 
 func (etx *EthTx) perform(input models.RunInput, store *strpkg.Store) models.RunOutput {
+	fmt.Println("GasLimit", etx.GasLimit)
 	value, err := getTxData(etx, input)
 	if err != nil {
 		err = errors.Wrap(err, "while constructing EthTx data")
@@ -62,7 +63,15 @@ func (etx *EthTx) perform(input models.RunInput, store *strpkg.Store) models.Run
 	toAddress := etx.ToAddress
 	fromAddress := etx.FromAddress
 	encodedPayload := utils.ConcatBytes(etx.FunctionSelector.Bytes(), etx.DataPrefix, value)
-	if err := store.IdempotentInsertEthTaskRunTransaction(taskRunID, fromAddress, toAddress, encodedPayload, etx.GasLimit); err != nil {
+
+	var gasLimit uint64
+	if etx.GasLimit == nil {
+		gasLimit = store.Config.EthGasLimitDefault()
+	} else {
+		gasLimit = *etx.GasLimit
+	}
+
+	if err := store.IdempotentInsertEthTaskRunTransaction(taskRunID, fromAddress, toAddress, encodedPayload, gasLimit); err != nil {
 		return models.NewRunOutputError(err)
 	}
 
@@ -85,7 +94,11 @@ func (etx *EthTx) legacyPerform(input models.RunInput, store *strpkg.Store) mode
 	}
 
 	data := utils.ConcatBytes(etx.FunctionSelector.Bytes(), etx.DataPrefix, value)
-	return createTxRunResult(etx.ToAddress, etx.GasPrice, etx.GasLimit, data, input, store)
+	gasLimit := uint64(0)
+	if etx.GasLimit != nil {
+		gasLimit = *etx.GasLimit
+	}
+	return createTxRunResult(etx.ToAddress, etx.GasPrice, gasLimit, data, input, store)
 }
 
 // getTxData returns the data to save against the callback encoded according to

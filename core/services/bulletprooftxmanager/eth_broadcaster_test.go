@@ -327,6 +327,9 @@ func TestBulletproofTxManager_ProcessUnbroadcastEthTransactions_ResumingFromCras
 	// t.Run("previous run assigned nonce and broadcast and is now confirmed")
 }
 
+func TestBulletproofTxManager_ProcessUnbroadcastEthTransactions_ChangingDefaultGasLimitAndRestartingErrorsJobsInFlight(t *testing.T) {
+}
+
 func TestBulletproofTxManager_ProcessUnbroadcastEthTransactions_Errors(t *testing.T) {
 	// SAD
 	// - key is gone from database (no matching address) - mock keystore to return error "authentication needed: password or unlock"

@@ -704,14 +704,14 @@ func (orm *ORM) IdempotentInsertEthTaskRunTransaction(taskRunID models.ID, fromA
 				return err
 			}
 			t := savedRecord.EthTransaction
-			if t.ToAddress != toAddress || !bytes.Equal(t.EncodedPayload, encodedPayload) || t.GasLimit != gasLimit {
+			if t.ToAddress != toAddress || !bytes.Equal(t.EncodedPayload, encodedPayload) {
 				return fmt.Errorf(
 					"transaction already exists for task run ID %s but it has different parameters\n"+
-						"New parameters: toAddress: %s, encodedPayload: 0x%s, gasLimit: %v\n"+
-						"Existing record has: toAddress: %s, encodedPayload: 0x%s, gasLimit: %v",
+						"New parameters: toAddress: %s, encodedPayload: 0x%s"+
+						"Existing record has: toAddress: %s, encodedPayload: 0x%s",
 					taskRunID.String(),
-					toAddress.String(), hex.EncodeToString(encodedPayload), gasLimit,
-					t.ToAddress.String(), hex.EncodeToString(t.EncodedPayload), t.GasLimit,
+					toAddress.String(), hex.EncodeToString(encodedPayload),
+					t.ToAddress.String(), hex.EncodeToString(t.EncodedPayload),
 				)
 			}
 			return nil

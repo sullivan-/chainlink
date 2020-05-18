@@ -1599,6 +1599,29 @@ func TestORM_EthTaskRunTransaction(t *testing.T) {
 		assert.Contains(t, err.Error(), "transaction already exists for task run ID")
 	})
 
+	t.Run("does not return error on re-insert if only the gas limit changed", func(t *testing.T) {
+		taskRunID := cltest.MustInsertTaskRun(t, store)
+		toAddress := cltest.NewAddress()
+		encodedPayload := []byte{0, 1, 2}
+		firstGasLimit := uint64(42)
+
+		// First insert
+		err := store.IdempotentInsertEthTaskRunTransaction(taskRunID, &fromAddress, toAddress, encodedPayload, firstGasLimit)
+		require.NoError(t, err)
+
+		secondGasLimit := uint64(99)
+
+		// Second insert
+		err = store.IdempotentInsertEthTaskRunTransaction(taskRunID, &fromAddress, toAddress, encodedPayload, secondGasLimit)
+		require.NoError(t, err)
+
+		etrt, err := store.FindEthTaskRunTransactionByTaskRunID(taskRunID)
+		require.NoError(t, err)
+
+		// But the second insert did not change the gas limit
+		assert.Equal(t, firstGasLimit, etrt.EthTransaction.GasLimit)
+	})
+
 	t.Run("handles nil from address", func(t *testing.T) {
 		taskRunID := cltest.MustInsertTaskRun(t, store)
 
